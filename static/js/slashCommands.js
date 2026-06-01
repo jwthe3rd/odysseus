@@ -145,6 +145,7 @@ function _showSetupEndpointChoices() {
         '<div style="font-weight:700;margin-bottom:6px;">' + SETUP_LOCAL_ICON + 'Local setup</div>' +
         '<div>Paste endpoint URL in chat (example):</div>' +
         '<pre style="margin:4px 0 0;"><code>http://localhost:11434/v1</code></pre>' +
+        '<div style="margin-top:4px;font-size:0.85em;color:var(--fg-muted);">Ollama · llama.cpp: <code>http://localhost:8080/v1</code></div>' +
         '<div style="margin-top:4px;">or</div>' +
         '<pre style="margin:2px 0 0;"><code>http://llm-host.local:8000/v1</code></pre>' +
       '</div>' +
@@ -170,6 +171,7 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       text: 'http://localhost:11434/v1',
       copyText: 'http://localhost:11434/v1',
     },
+    { kind: 'p', html: 'Ollama · llama.cpp: <code>http://localhost:8080/v1</code>' },
     { kind: 'p', text: 'or' },
     {
       kind: 'code',

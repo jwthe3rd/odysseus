@@ -301,6 +301,21 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             logger.warning(f"Failed to probe {url} with API key: {e}")
             return []
         logger.warning(f"Failed to probe {url}: {e}")
+    # Retry at /v1/models if the base URL has no /v1 path (e.g. user entered http://localhost:5080
+    # without /v1 — llama.cpp, LM Studio, and other OpenAI-compat servers require the /v1 prefix).
+    if not api_key and not base.rstrip("/").endswith("/v1"):
+        v1_url = base.rstrip("/") + "/v1/models"
+        try:
+            r2 = httpx.get(v1_url, headers=headers, timeout=timeout)
+            r2.raise_for_status()
+            data2 = r2.json()
+            models = [m.get("id") for m in (data2.get("data") or []) if m.get("id")]
+            if not models:
+                models = [m.get("name") or m.get("model") for m in (data2.get("models") or []) if m.get("name") or m.get("model")]
+            if models:
+                return models
+        except Exception:
+            pass
     # Fall back to curated list if the provider has a URL-based match (e.g. z.ai has no /models endpoint)
     curated_key = _match_provider_curated(base, None)
     fallback = _PROVIDER_CURATED.get(curated_key) if curated_key else None
@@ -839,8 +854,9 @@ def setup_model_routes(model_discovery):
         require_model_list = _truthy(require_models)
         should_probe = require_model_list or not _truthy(skip_probe)
 
-        # Quick model list fetch (1s timeout — if endpoint is slow, it'll update on next refresh)
-        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=1) if should_probe else []
+        # Local endpoints (llama.cpp, Ollama, etc.) get 5s — they can be slower than cloud APIs
+        _probe_timeout = 5 if _classify_endpoint(base_url) == "local" else 1
+        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=_probe_timeout) if should_probe else []
         if require_model_list and not model_ids:
             raise HTTPException(400, "No models found for that provider/key")
 

@@ -6,6 +6,7 @@ Consolidates the 4+ copies of normalize_base / resolve_endpoint logic into one p
 
 import json
 import logging
+import os
 import socket
 import subprocess
 from typing import Optional, Tuple, Dict
@@ -15,6 +16,11 @@ from src.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider
 
 logger = logging.getLogger(__name__)
+
+# True when running inside a Docker container. Used to remap localhost →
+# host.docker.internal so host-machine services (llama.cpp, Ollama, vLLM)
+# are reachable without the user knowing about Docker networking.
+_IN_DOCKER = os.path.exists("/.dockerenv")
 
 # Model-name substrings that are NOT chat/generation models. When an endpoint
 # has no explicit model configured we pick the first CHAT model from its list —
@@ -80,14 +86,23 @@ def _resolve_tailscale_host(hostname: str) -> Optional[str]:
 
 
 def resolve_url(url: str) -> str:
-    """If a URL's hostname can't be resolved via DNS, try Tailscale."""
+    """Resolve a URL for outbound connection.
+
+    When running inside Docker, remaps localhost/127.0.0.1 to
+    host.docker.internal so host-machine services are reachable.
+    Falls back to Tailscale hostname resolution when DNS fails.
+    """
     parsed = urlparse(url)
     hostname = parsed.hostname
     if not hostname:
         return url
+    if _IN_DOCKER and hostname in ("localhost", "127.0.0.1"):
+        netloc = "host.docker.internal"
+        if parsed.port:
+            netloc = f"host.docker.internal:{parsed.port}"
+        return urlunparse(parsed._replace(netloc=netloc))
     ip = _resolve_tailscale_host(hostname)
     if ip:
-        # Replace hostname with IP in the URL
         netloc = ip
         if parsed.port:
             netloc = f"{ip}:{parsed.port}"

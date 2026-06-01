@@ -33,6 +33,12 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
+    # Makes host.docker.internal resolve to the Docker bridge gateway so
+    # services running on the host machine (llama.cpp, vLLM, Ollama, etc.)
+    # are reachable from inside the container. On Docker Desktop this is
+    # automatic; on Linux Docker Engine it requires this extra_hosts entry.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
   chromadb:
