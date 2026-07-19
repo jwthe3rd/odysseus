@@ -11,10 +11,13 @@ import dragSortModule from './dragSort.js';
 import spinnerModule from './spinner.js';
 import { modelColor } from './chatRenderer.js';
 import { providerLogo } from './providers.js';
+import { sortModelIds } from './modelSort.js';
 
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
 let _lastFetchTime = 0;
+let _fetchInflight = null;
+let _fetchSeq = 0;
 const _FETCH_CACHE_TTL = 30000; // 30s client-side cache for /api/models
 const COLLAPSE_KEY = 'odysseus-models-collapsed';
 const FAVORITES_KEY = 'odysseus-model-favorites';
@@ -163,30 +166,52 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
 
 export async function refreshModels(force = false) {
   const box = document.getElementById('models');
-  if (!box) return;
 
   // Skip network fetch if cache is fresh and not forced — still re-render UI
   const now = Date.now();
   const needsFetch = force || _cachedItems.length === 0 || (now - _lastFetchTime) >= _FETCH_CACHE_TTL;
 
-  box.innerHTML = '';
+  if (box) box.innerHTML = '';
   if (needsFetch) {
-    const _loadingSpinner = spinnerModule.create('', 'right', 'wave');
-    box.appendChild(_loadingSpinner.createElement());
-    _loadingSpinner.start();
+    let _loadingSpinner = null;
+    if (box) {
+      _loadingSpinner = spinnerModule.create('', 'right', 'wave');
+      box.appendChild(_loadingSpinner.createElement());
+      _loadingSpinner.start();
+    }
     try {
-      const res = await fetch(`${API_BASE}/api/models`);
-      const data = await res.json();
+      if (force) _fetchInflight = null;
+      if (!_fetchInflight) {
+        // Pass ?refresh=true on forced refreshes so the BACKEND's 30s
+        // per-user cache also gets bypassed. Without this, `force=true`
+        // only clears the frontend cache and the same stale list comes
+        // back — newly-served endpoints don't appear until the cache
+        // ages out. (Bug repro: serve a model, picker is empty for ~30s
+        // even though the endpoint is in the DB and online.)
+        const _seq = ++_fetchSeq;
+        const _url = `${API_BASE}/api/models` + (force ? '?refresh=true' : '?background=false');
+        _fetchInflight = fetch(_url, { credentials: 'same-origin' })
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            return { data, seq: _seq };
+          })
+          .finally(() => { _fetchInflight = null; });
+      }
+      const { data, seq } = await _fetchInflight;
+      if (seq < _fetchSeq) return;
       _lastFetchTime = Date.now();
       _cachedItems = data.items || [];
     } catch (e) {
       console.error(e);
-      box.textContent = '(scan failed)';
+      if (box) box.textContent = '(scan failed)';
       return;
     } finally {
-      box.innerHTML = '';
+      try { _loadingSpinner && _loadingSpinner.stop && _loadingSpinner.stop(); } catch (_) {}
+      if (box) box.innerHTML = '';
     }
   }
+  if (!box) return;
   try {
 
     const collapseState = _loadCollapsed();
@@ -553,7 +578,7 @@ export async function refreshModels(force = false) {
       box.appendChild(noModels);
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span style="color:var(--accent,var(--red));font-weight:600">/setup</span> to get started.';
+      if (welcomeSub) welcomeSub.innerHTML = 'Type <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">/setup</span> to get started.';
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
     } else {
@@ -603,7 +628,7 @@ export async function refreshProviders() {
 
     if (openai) {
       const models = (openai.items?.[0]?.models) || [];
-      models.forEach(m => {
+      sortModelIds(models).forEach(m => {
         const opt = document.createElement('option');
         opt.value = m;
         opt.textContent = m;

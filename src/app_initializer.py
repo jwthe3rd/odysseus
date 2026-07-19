@@ -9,6 +9,7 @@ from src.constants import (
     SESSIONS_FILE, DEFAULT_HOST, OPENAI_API_KEY
 )
 from src.memory import MemoryManager
+from src.memory_provider import MemoryProviderRegistry, NativeMemoryProvider
 from services.memory.skills import SkillsManager
 from core.session_manager import SessionManager
 from core.models import set_session_manager
@@ -67,11 +68,17 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
                     logger.info(f"Rebuilt memory vector index from {len(existing)} existing entries")
             logger.info("MemoryVectorStore initialized")
         else:
+            # Keep the unhealthy object (do NOT reset to None): consumers gate on
+            # `.healthy`, and service_health.chromadb_health() needs a present
+            # object to report DEGRADED/DOWN instead of DISABLED ("not configured").
             logger.warning("MemoryVectorStore DEGRADED: ChromaDB vector memory unavailable")
-            memory_vector = None
     except Exception as e:
         logger.warning(f"MemoryVectorStore DEGRADED: {e}")
         memory_vector = None
+
+    memory_provider_registry = MemoryProviderRegistry([
+        NativeMemoryProvider(memory_manager, memory_vector),
+    ])
 
     # Initialize processors
     chat_processor = ChatProcessor(memory_manager, personal_docs_manager, memory_vector=memory_vector, skills_manager=skills_manager)
@@ -99,6 +106,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     return {
         "memory_manager": memory_manager,
         "memory_vector": memory_vector,
+        "memory_provider_registry": memory_provider_registry,
         "skills_manager": skills_manager,
         "session_manager": session_manager,
         "upload_handler": upload_handler,
